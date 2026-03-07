@@ -1,0 +1,10 @@
+# Desarrollo: monta el código y reinicia el bot al cambiar *.py (hot reload)
+# Uso: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  bot:
+    volumes:
+      - ./config:/app/config:ro
+      - ./src:/app/src
+      - ./scripts:/app/scripts:ro
+      - ./data:/data
+    command: watchmedo auto-restart -d /app -p "*.py" --recursive -- python -m src.main

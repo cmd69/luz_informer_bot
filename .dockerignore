@@ -1,0 +1,22 @@
+# No copiar venv ni dependencias del host; todo se instala en el contenedor
+.venv
+venv
+env
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+
+# Datos y secretos (se montan por volumen o env)
+.env
+data/
+*.db
+
+# Git y documentación de desarrollo
+.git
+.gitignore
+*.md
+.cursor
+docs
+tests
