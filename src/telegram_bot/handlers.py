@@ -1,4 +1,4 @@
-"""Telegram handlers: /start, /help, /price, /today, /tomorrow, /fetchtoday, /fetchtomorrow."""
+"""Telegram handlers: consulta, fetch, alertas."""
 import logging
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -10,6 +10,7 @@ from aiogram.types import Message
 from config.settings import TELEGRAM_CHAT_IDS, TIMEZONE, get_umbrales_fecha
 from src.precios.models import PreciosDia, TramoPrecio
 from src.precios.tarifaluzhora import fetch_precios_dia
+from src.scheduler.alertas_ia import generar_alertas_dia
 from src.storage import repository as repo
 
 logger = logging.getLogger(__name__)
@@ -257,6 +258,69 @@ async def cmd_fetchtomorrow(message: Message):
         f"✅ Precios de mañana obtenidos y guardados.\n"
         f"Mín: {precios.min_precio:.4f} | Máx: {precios.max_precio:.4f} | Horas: {n}"
     )
+
+
+@router.message(Command("generate_tips"))
+async def cmd_generate_tips(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    hoy = _fecha_hoy()
+    tramos = repo.obtener_precios_fecha(hoy)
+    if len(tramos) < 24:
+        await message.answer("⏳ Obteniendo precios de hoy...")
+        precios, web_date = fetch_precios_dia(hoy)
+        if not precios:
+            if web_date is not None and web_date != hoy:
+                repo.borrar_precios_fecha(hoy + timedelta(days=1))
+                await message.answer(
+                    f"⏳ Todavía no hay datos para hoy (la web muestra {web_date.strftime('%d/%m/%Y')})."
+                )
+            else:
+                await message.answer("❌ Error: no se pudieron obtener los precios.")
+            return
+        repo.guardar_precios_dia(precios.fecha, [(t.hora, t.precio) for t in precios.tramos_ordenados()])
+        await message.answer(f"✅ Precios obtenidos: {len(precios.tramos)} horas.")
+    await message.answer("📋 Generando alertas del día… Las irás recibiendo en vivo.")
+
+    async def enviar_alerta(_hora: str, _tipo: str, mensaje: str) -> None:
+        await message.bot.send_message(chat_id=message.chat.id, text=mensaje)
+
+    alertas = await generar_alertas_dia(hoy, on_alert=enviar_alerta)
+    if not alertas:
+        await message.answer("⚠️ No se generaron alertas (comprueba si hay precios disponibles).")
+        return
+    repo.guardar_alertas_programadas(hoy, alertas)
+    await message.answer(f"✅ {len(alertas)} alertas generadas y guardadas para hoy.")
+
+
+@router.message(Command("show_alerts"))
+async def cmd_show_alerts(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    hoy = _fecha_hoy()
+    alertas = repo.obtener_alertas_dia(hoy)
+    if not alertas:
+        await message.answer("📭 No hay alertas para hoy. Usa /generate_tips para crearlas.")
+        return
+    lineas = [f"🔔 <b>Alertas para {hoy}</b>", ""]
+    for al in alertas:
+        estado = "✅" if al["enviado"] else "⏳"
+        lineas.append(f"{estado} <b>{al['hora_envio']}</b> [{al['tipo']}]: {al['mensaje']}")
+    await message.answer("\n".join(lineas), parse_mode="HTML")
+
+
+@router.message(Command("test_alerts"))
+async def cmd_test_alerts(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    hoy = _fecha_hoy()
+    alertas = repo.obtener_alertas_dia(hoy)
+    if not alertas:
+        await message.answer("📭 No hay alertas para hoy. Usa /generate_tips primero.")
+        return
+    al = alertas[0]
+    await message.answer(f"🧪 <b>ALERTA DE PRUEBA</b>\n\n{al['mensaje']}", parse_mode="HTML")
+    await message.answer(f"_Info: {al['hora_envio']} [{al['tipo']}]_", parse_mode="Markdown")
 
 
 @router.message(F.text)
