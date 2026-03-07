@@ -1,0 +1,7 @@
+# Incluye todas las de producción (no se heredan en Docker multi-stage)
+-r requirements.txt
+# Tests
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+# Linters (para workflows y desarrollo)
+ruff>=0.8.0

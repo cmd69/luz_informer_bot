@@ -1,7 +1,12 @@
-.PHONY: up down down-v up-dev down-dev down-dev-v test test-dev test-local help
+.PHONY: up down down-v up-dev down-dev down-dev-v build test test-dev test-local lint lint-local help
 .DEFAULT_GOAL := help
 
 COMPOSE_DEV = -f docker-compose.yml -f docker-compose.dev.yml
+
+# --- Build ---
+# Imagen de producción (stage runtime, código dentro de la imagen)
+build:
+	docker compose build
 
 # --- Producción ---
 # Levantar servicios en segundo plano
@@ -53,22 +58,42 @@ test-local:
 		exit 1; \
 	fi
 
+# --- Linters ---
+# Ruff en el host (requiere .venv con requirements-dev.txt)
+lint:
+	@if [ -d .venv ]; then \
+		.venv/bin/ruff check config/ src/ tests/ && .venv/bin/ruff format --check config/ src/ tests/; \
+	else \
+		echo "No existe .venv. Crea el venv e instala: pip install -r requirements-dev.txt"; \
+		exit 1; \
+	fi
+
+lint-local: lint
+
 help:
-	@echo "Uso: make [objetivo]"
+	@echo "Luz Informer Bot - make [objetivo]"
 	@echo ""
-	@echo "Producción:"
-	@echo "  up         - Levantar servicios (docker compose up -d)"
-	@echo "  down       - Parar servicios (docker compose down)"
-	@echo "  down-v     - Parar servicios y eliminar volúmenes (docker compose down -v)"
+	@echo "Build:"
+	@echo "  build - Construir imagen de producción (código dentro de la imagen)"
 	@echo ""
-	@echo "Desarrollo (hot reload):"
-	@echo "  up-dev     - Levantar con compose de dev (código montado, watchmedo)"
+	@echo "Producción (sin montar código):"
+	@echo "  up     - Levantar bot (docker compose up -d)"
+	@echo "  down   - Parar servicios"
+	@echo "  down-v - Parar y eliminar volúmenes"
+	@echo ""
+	@echo "Desarrollo (hot reload, monta código y reinicia al cambiar .py):"
+	@echo "  up-dev     - Levantar con compose de dev"
 	@echo "  down-dev   - Parar servicios de dev"
-	@echo "  down-dev-v - Parar servicios de dev y eliminar volúmenes"
+	@echo "  down-dev-v - Parar y eliminar volúmenes"
 	@echo ""
 	@echo "Tests:"
-	@echo "  test       - Ejecutar tests dentro del contenedor"
-	@echo "  test-dev   - Ejecutar tests en contenedor con stack de dev"
-	@echo "  test-local - Ejecutar tests en el host con .venv"
+	@echo "  test       - Tests en contenedor (montando tests/)"
+	@echo "  test-dev   - Tests en contenedor con stack de dev"
+	@echo "  test-local - Tests en el host con .venv"
 	@echo ""
-	@echo "  help       - Mostrar esta ayuda"
+	@echo "Linters (requiere .venv + requirements-dev.txt):"
+	@echo "  lint / lint-local - Ruff check + format"
+	@echo ""
+	@echo "CI: GitHub Actions usa Python en el runner (pytest, ruff). Ver .github/workflows/"
+	@echo ""
+	@echo "  help - Mostrar esta ayuda"

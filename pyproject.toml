@@ -1,0 +1,20 @@
+[project]
+name = "luz-informer-bot"
+version = "0.1.0"
+description = "Bot de Telegram para precios PVPC, alertas y consultas con IA"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["config", "src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = []
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

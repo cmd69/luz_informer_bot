@@ -19,4 +19,4 @@ data/
 *.md
 .cursor
 docs
-tests
+# tests/ se incluye solo en el stage 'test' del Dockerfile (build --target test)

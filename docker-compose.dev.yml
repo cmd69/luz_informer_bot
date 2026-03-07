@@ -1,7 +1,14 @@
-# Desarrollo: monta el código y reinicia el bot al cambiar *.py (hot reload)
-# Uso: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Luz Informer Bot - Desarrollo (hot reload)
+# make up-dev / make down-dev
+# Monta código y usa watchmedo para reiniciar al cambiar *.py
+
 services:
   bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: luz-informer-bot
     volumes:
       - ./config:/app/config:ro
       - ./src:/app/src
