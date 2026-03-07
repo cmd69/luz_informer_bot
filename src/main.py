@@ -27,6 +27,8 @@ async def set_bot_commands(bot: Bot) -> None:
         BotCommand(command="price", description="Precios alrededor de ahora"),
         BotCommand(command="today", description="Resumen de precios de hoy"),
         BotCommand(command="tomorrow", description="Resumen de precios de mañana"),
+        BotCommand(command="fetchtoday", description="Descargar precios de hoy"),
+        BotCommand(command="fetchtomorrow", description="Descargar precios de mañana"),
         BotCommand(command="help", description="Ver todos los comandos"),
     ]
     await bot.set_my_commands(commands)

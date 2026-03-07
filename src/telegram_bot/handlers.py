@@ -1,4 +1,4 @@
-"""Telegram handlers: /start, /help, /price, /today, /tomorrow."""
+"""Telegram handlers: /start, /help, /price, /today, /tomorrow, /fetchtoday, /fetchtomorrow."""
 import logging
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -9,6 +9,7 @@ from aiogram.types import Message
 
 from config.settings import TELEGRAM_CHAT_IDS, TIMEZONE, get_umbrales_fecha
 from src.precios.models import PreciosDia, TramoPrecio
+from src.precios.tarifaluzhora import fetch_precios_dia
 from src.storage import repository as repo
 
 logger = logging.getLogger(__name__)
@@ -207,6 +208,55 @@ async def cmd_tomorrow(message: Message):
         return
     precios = PreciosDia(fecha=manana, tramos=[TramoPrecio(hora=h, precio=p) for h, p in tramos])
     await message.answer(_resumen_dia(precios, "(mañana)"), parse_mode="HTML")
+
+
+@router.message(Command("fetchtoday"))
+async def cmd_fetchtoday(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    hoy = _fecha_hoy()
+    manana = hoy + timedelta(days=1)
+    await message.answer("⏳ Obteniendo precios de hoy...")
+    precios, web_date = fetch_precios_dia(hoy)
+    if not precios:
+        if web_date is not None and web_date != hoy:
+            repo.borrar_precios_fecha(manana)
+            await message.answer(
+                f"⏳ Todavía no hay datos para hoy. La web muestra fecha {web_date.strftime('%d/%m/%Y')}. "
+                "Se han borrado los precios de mañana por si estaban mal."
+            )
+        else:
+            await message.answer("❌ Error: no se pudieron obtener los precios (revisa la web o la conexión).")
+        return
+    repo.guardar_precios_dia(precios.fecha, [(t.hora, t.precio) for t in precios.tramos_ordenados()])
+    n = len(precios.tramos)
+    await message.answer(
+        f"✅ Precios de hoy obtenidos y guardados.\n"
+        f"Mín: {precios.min_precio:.4f} | Máx: {precios.max_precio:.4f} | Horas: {n}"
+    )
+
+
+@router.message(Command("fetchtomorrow"))
+async def cmd_fetchtomorrow(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    manana = _fecha_hoy() + timedelta(days=1)
+    await message.answer(f"⏳ Obteniendo precios de mañana ({manana.strftime('%d/%m/%Y')}) desde la web...")
+    precios, web_date = fetch_precios_dia(manana)
+    if not precios:
+        if web_date is not None and web_date != manana:
+            await message.answer(
+                f"⏳ Todavía no hay datos para mañana. La web muestra fecha {web_date.strftime('%d/%m/%Y')}."
+            )
+        else:
+            await message.answer("❌ Error: no se pudieron obtener los precios (revisa la web o la conexión).")
+        return
+    repo.guardar_precios_dia(precios.fecha, [(t.hora, t.precio) for t in precios.tramos_ordenados()])
+    n = len(precios.tramos)
+    await message.answer(
+        f"✅ Precios de mañana obtenidos y guardados.\n"
+        f"Mín: {precios.min_precio:.4f} | Máx: {precios.max_precio:.4f} | Horas: {n}"
+    )
 
 
 @router.message(F.text)
