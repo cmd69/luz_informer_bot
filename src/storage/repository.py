@@ -172,10 +172,10 @@ def get_modelo_chat(chat_id: str) -> Optional[str]:
 
 
 def set_modelo_chat(chat_id: str, modelo: str) -> None:
-    from datetime import datetime
+    from datetime import datetime, timezone
     conn = get_connection()
     try:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """INSERT INTO modelo_por_chat (chat_id, modelo, actualizado_at) VALUES (?, ?, ?)
                ON CONFLICT(chat_id) DO UPDATE SET modelo = ?, actualizado_at = ?""",

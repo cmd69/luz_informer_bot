@@ -7,7 +7,8 @@ from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
-from config.settings import TELEGRAM_CHAT_IDS, TIMEZONE, get_umbrales_fecha
+from config.settings import LLM_MODEL, TELEGRAM_CHAT_IDS, TIMEZONE, get_umbrales_fecha
+from src.llm import client as llm_client
 from src.precios.models import PreciosDia, TramoPrecio
 from src.precios.tarifaluzhora import fetch_precios_dia
 from src.scheduler.alertas_ia import generar_alertas_dia
@@ -165,6 +166,18 @@ async def cmd_help(message: Message):
         "<code>/price</code> — Precios alrededor de ahora\n"
         "<code>/today</code> — Resumen de hoy\n"
         "<code>/tomorrow</code> — Resumen de mañana\n\n"
+        "<b>📥 DATOS:</b>\n"
+        "<code>/fetchtoday</code> — Descargar precios de hoy\n"
+        "<code>/fetchtomorrow</code> — Descargar precios de mañana\n\n"
+        "<b>🤖 IA:</b>\n"
+        "<code>/ask</code> &lt;pregunta&gt; — Pregunta sobre precios\n"
+        "<code>/models</code> — Listar modelos\n"
+        "<code>/models</code> &lt;nombre&gt; — Elegir modelo\n"
+        "<code>/testollama</code> — Probar conexión Ollama\n\n"
+        "<b>🔔 ALERTAS:</b>\n"
+        "<code>/generate_tips</code> — Generar alertas del día\n"
+        "<code>/show_alerts</code> — Ver alertas de hoy\n"
+        "<code>/test_alerts</code> — Enviar alerta de prueba\n\n"
         "<i>Escribe / en el chat para ver los comandos.</i>"
     )
     await message.answer(ayuda_text, parse_mode="HTML")
@@ -321,6 +334,73 @@ async def cmd_test_alerts(message: Message):
     al = alertas[0]
     await message.answer(f"🧪 <b>ALERTA DE PRUEBA</b>\n\n{al['mensaje']}", parse_mode="HTML")
     await message.answer(f"_Info: {al['hora_envio']} [{al['tipo']}]_", parse_mode="Markdown")
+
+
+@router.message(Command("models"), F.text.len() > 7)
+async def cmd_models_set(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    nombre = message.text.split(maxsplit=1)[1].strip()
+    repo.set_modelo_chat(str(message.chat.id), nombre)
+    await message.answer(f"✅ Modelo elegido: {nombre}")
+
+
+@router.message(Command("models"))
+async def cmd_models_list(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    modelos = llm_client.list_models()
+    if not modelos:
+        await message.answer("❌ No se pudo obtener la lista de modelos (¿Ollama accesible?).")
+        return
+    await message.answer("Modelos disponibles:\n" + "\n".join(f"• {m}" for m in modelos) + "\n\nUsa /models <nombre> para elegir.")
+
+
+@router.message(Command("testollama"))
+async def cmd_test_ollama(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    ok, msg = llm_client.ollama_health()
+    await message.answer(msg)
+
+
+@router.message(Command("ask"))
+async def cmd_ask(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    partes = message.text.split(maxsplit=1)
+    pregunta = partes[1].strip() if len(partes) > 1 else ""
+    if not pregunta:
+        await message.answer("Uso: /ask <tu pregunta sobre precios de la luz>")
+        return
+    hoy = _fecha_hoy()
+    manana = hoy + timedelta(days=1)
+    ctx_lineas = []
+    for f, label in [(hoy, "today"), (manana, "tomorrow")]:
+        tramos = repo.obtener_precios_fecha(f)
+        if tramos:
+            tramos_str = ", ".join([f"{h:02d}:00={p:.3f}" for h, p in tramos])
+            ctx_lineas.append(f"{label} (24h in €/kWh): {tramos_str}")
+    contexto = "\n".join(ctx_lineas) if ctx_lineas else "Sin datos de precios recientes."
+    modelo = repo.get_modelo_chat(str(message.chat.id)) or LLM_MODEL
+    try:
+        from src.llm.client import chat_completion
+        system_prompt = (
+            "You are an assistant that answers questions about electricity prices in Spain (PVPC). "
+            "You have access to hourly prices for today and tomorrow (format: HH:00=price €/kWh). "
+            "Answer in Spanish. If asked about prices not in the context, say you don't have that data."
+        )
+        resp = chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Price context:\n{contexto}\n\nUser question: {pregunta}"},
+            ],
+            model=modelo,
+            caller="ask",
+        )
+        await message.answer(resp or "Sin respuesta del modelo.")
+    except Exception as e:
+        await message.answer(f"❌ Servicio de consultas no disponible: {e}")
 
 
 @router.message(F.text)
