@@ -11,10 +11,10 @@ if str(_root) not in __import__("sys").path:
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config.settings import TELEGRAM_BOT_TOKEN, TIMEZONE
+from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, TIMEZONE
 from src.storage.repository import init_db
 from src.telegram_bot.handlers import router
 from src.telegram_bot.logging_middleware import InteractionLoggingMiddleware
@@ -42,22 +42,34 @@ async def _job_enviar_alertas() -> None:
 
 
 async def set_bot_commands(bot: Bot) -> None:
-    commands = [
+    comandos_publicos = [
+        BotCommand(command="start", description="Bienvenida e información del bot"),
         BotCommand(command="price", description="Precios alrededor de ahora"),
         BotCommand(command="today", description="Resumen de precios de hoy"),
         BotCommand(command="tomorrow", description="Resumen de precios de mañana"),
+        BotCommand(command="ask", description="Preguntar a la IA sobre precios"),
+        BotCommand(command="notificaciones", description="Activar/desactivar alertas automáticas"),
+        BotCommand(command="help", description="Ver todos los comandos"),
+    ]
+    comandos_admin = comandos_publicos + [
         BotCommand(command="fetchtoday", description="Descargar precios de hoy"),
         BotCommand(command="fetchtomorrow", description="Descargar precios de mañana"),
-        BotCommand(command="ask", description="Preguntar a la IA sobre precios"),
-        BotCommand(command="models", description="Listar o elegir modelo de IA"),
-        BotCommand(command="help", description="Ver todos los comandos"),
-        BotCommand(command="testollama", description="Probar conexión con Ollama"),
-        BotCommand(command="generate_alerts", description="Obtener precios y generar alertas"),
+        BotCommand(command="generate_alerts", description="Generar alertas del día"),
         BotCommand(command="show_alerts", description="Ver alertas programadas de hoy"),
         BotCommand(command="test_alerts", description="Ver la próxima alerta pendiente"),
-        BotCommand(command="notificaciones", description="Activar/desactivar alertas automáticas"),
+        BotCommand(command="models", description="Listar o elegir modelo de IA"),
+        BotCommand(command="testollama", description="Probar conexión con Ollama"),
     ]
-    await bot.set_my_commands(commands)
+
+    # Comandos públicos como default para cualquier usuario
+    await bot.set_my_commands(comandos_publicos, scope=BotCommandScopeDefault())
+
+    # Comandos completos para cada admin
+    for chat_id in TELEGRAM_CHAT_IDS:
+        try:
+            await bot.set_my_commands(comandos_admin, scope=BotCommandScopeChat(chat_id=int(chat_id)))
+        except Exception as e:
+            logger.warning("No se pudieron registrar comandos admin para chat_id=%s: %s", chat_id, e)
 
 
 async def main() -> None:
