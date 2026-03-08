@@ -1,0 +1,49 @@
+---
+description: Entorno de desarrollo — stack Python con hot-reload via watchmedo
+globs:
+alwaysApply: true
+---
+
+# Entorno de desarrollo — luz_informer_bot
+
+Stack: **Python**. Hot-reload via `watchmedo` (reinicia el bot al cambiar `*.py`).
+
+## Compose de desarrollo
+
+Este proyecto usa un **compose de override**: el archivo base más el override de dev.
+
+```bash
+# Levantar en desarrollo (hot-reload)
+make up-dev
+# equivale a: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Parar
+make down-dev
+
+# Ver logs
+docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
+```
+
+## Comandos en contenedor
+
+Todos los comandos que requieren librerías se ejecutan **dentro del contenedor**:
+
+```bash
+# Tests (en contenedor, montando tests/)
+make test-dev
+# equivale a: docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm bot python -m pytest tests/ -v
+
+# Shell interactivo
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec bot bash
+```
+
+## Linting (requiere .venv local)
+
+Ruff se ejecuta desde el host con `.venv`:
+
+```bash
+make lint
+# requiere: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+```
+
+El `.venv` es solo para herramientas de desarrollo local (IDE, linters). La ejecución real siempre en contenedor.
