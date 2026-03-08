@@ -150,8 +150,15 @@ async def cmd_start(message: Message):
     if await _reject_if_not_allowed(message):
         return
     await message.answer(
-        "⚡️ Bot de precios de la luz (PVPC)\n\n"
-        "Usa /help para ver todos los comandos."
+        "⚡️ <b>Bot de precios de la luz (PVPC)</b>\n\n"
+        "Te informo de los precios de la electricidad en tiempo real y te aviso automáticamente "
+        "de las franjas baratas y caras del día.\n\n"
+        "🔔 <b>Alertas automáticas</b>\n"
+        "Las notificaciones están <b>activadas por defecto</b>. "
+        "Puedes desactivarlas (o reactivarlas) en cualquier momento con /notificaciones. "
+        "El cambio solo te afecta a ti.\n\n"
+        "Usa /help para ver todos los comandos disponibles.",
+        parse_mode="HTML",
     )
 
 
@@ -322,18 +329,61 @@ async def cmd_show_alerts(message: Message):
     await message.answer("\n".join(lineas), parse_mode="HTML")
 
 
+@router.message(Command("notificaciones"))
+async def cmd_notificaciones(message: Message):
+    if await _reject_if_not_allowed(message):
+        return
+    chat_id = str(message.chat.id)
+    actual = repo.get_notificaciones_chat(chat_id)
+    nuevo = not actual
+    repo.set_notificaciones_chat(chat_id, nuevo)
+    if nuevo:
+        await message.answer(
+            "🔔 <b>Notificaciones activadas.</b>\n"
+            "Recibirás las alertas programadas de precios de la luz.",
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            "🔕 <b>Notificaciones desactivadas.</b>\n"
+            "No recibirás alertas automáticas. Usa /notificaciones para reactivarlas.",
+            parse_mode="HTML",
+        )
+
+
 @router.message(Command("test_alerts"))
 async def cmd_test_alerts(message: Message):
     if await _reject_if_not_allowed(message):
         return
     hoy = _fecha_hoy()
-    alertas = repo.obtener_alertas_dia(hoy)
-    if not alertas:
-        await message.answer("📭 No hay alertas para hoy. Usa /generate_tips primero.")
+    now = datetime.now(TZ)
+    hora_actual_str = f"{now.hour:02d}:{now.minute:02d}"
+
+    alertas_hoy = repo.obtener_alertas_dia(hoy)
+    if not alertas_hoy:
+        await message.answer(
+            "📭 <b>No hay alertas generadas para hoy.</b>\n\n"
+            "Usa /generate_tips para generarlas. El scheduler también las genera automáticamente cada día a las 21:00.",
+            parse_mode="HTML",
+        )
         return
-    al = alertas[0]
-    await message.answer(f"🧪 <b>ALERTA DE PRUEBA</b>\n\n{al['mensaje']}", parse_mode="HTML")
-    await message.answer(f"_Info: {al['hora_envio']} [{al['tipo']}]_", parse_mode="Markdown")
+
+    proxima = repo.obtener_proxima_alerta_pendiente(hoy, hora_actual_str)
+    if proxima:
+        await message.answer(
+            f"🧪 <b>PRÓXIMA ALERTA PENDIENTE</b>\n\n"
+            f"🕐 <b>Hora programada:</b> {proxima['hora_envio']}\n"
+            f"📌 <b>Tipo:</b> {proxima['tipo']}\n\n"
+            f"{proxima['mensaje']}",
+            parse_mode="HTML",
+        )
+    else:
+        total = len(alertas_hoy)
+        await message.answer(
+            f"✅ <b>Todas las alertas de hoy ya han sido enviadas ({total}).</b>\n\n"
+            "Usa /generate_tips mañana para generar las del día siguiente.",
+            parse_mode="HTML",
+        )
 
 
 @router.message(Command("models"), F.text.len() > 7)

@@ -44,6 +44,11 @@ def init_db() -> None:
                 modelo TEXT NOT NULL,
                 actualizado_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS preferencias_chat (
+                chat_id TEXT PRIMARY KEY,
+                notificaciones INTEGER NOT NULL DEFAULT 1,
+                actualizado_at TEXT NOT NULL
+            );
         """)
         conn.commit()
     finally:
@@ -182,5 +187,62 @@ def set_modelo_chat(chat_id: str, modelo: str) -> None:
             (str(chat_id), modelo, now, modelo, now),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_notificaciones_chat(chat_id: str) -> bool:
+    """True si el chat tiene notificaciones activadas (default: True)."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT notificaciones FROM preferencias_chat WHERE chat_id = ?",
+            (str(chat_id),),
+        )
+        row = cur.fetchone()
+        return bool(row["notificaciones"]) if row else True
+    finally:
+        conn.close()
+
+
+def set_notificaciones_chat(chat_id: str, activas: bool) -> None:
+    from datetime import datetime, timezone
+    conn = get_connection()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """INSERT INTO preferencias_chat (chat_id, notificaciones, actualizado_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(chat_id) DO UPDATE
+               SET notificaciones = excluded.notificaciones,
+                   actualizado_at = excluded.actualizado_at""",
+            (str(chat_id), int(activas), now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def obtener_proxima_alerta_pendiente(fecha: date, hora_actual: str) -> Optional[dict]:
+    """Primera alerta pendiente para 'fecha' con hora_envio > hora_actual. None si no hay."""
+    conn = get_connection()
+    try:
+        cur = conn.execute(
+            """SELECT id, hora_envio, tipo, mensaje
+               FROM alertas_programadas
+               WHERE fecha = ? AND enviado = 0 AND hora_envio > ?
+               ORDER BY hora_envio
+               LIMIT 1""",
+            (fecha.isoformat(), hora_actual),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "hora_envio": row["hora_envio"],
+            "tipo": row["tipo"],
+            "mensaje": row["mensaje"],
+        }
     finally:
         conn.close()
