@@ -52,10 +52,10 @@ async def set_bot_commands(bot: Bot) -> None:
         BotCommand(command="models", description="Listar o elegir modelo de IA"),
         BotCommand(command="help", description="Ver todos los comandos"),
         BotCommand(command="testollama", description="Probar conexión con Ollama"),
-        BotCommand(command="generate_tips", description="Obtener precios y generar alertas"),
+        BotCommand(command="generate_alerts", description="Obtener precios y generar alertas"),
         BotCommand(command="show_alerts", description="Ver alertas programadas de hoy"),
         BotCommand(command="test_alerts", description="Ver la próxima alerta pendiente"),
-        BotCommand(command="notificaciones", description="Activar/desactivar alertas automáticas"),
+        BotCommand(command="notifications", description="Activar/desactivar alertas automáticas"),
     ]
     await bot.set_my_commands(commands)
 

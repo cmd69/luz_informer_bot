@@ -182,9 +182,10 @@ async def cmd_help(message: Message):
         "<code>/models</code> &lt;nombre&gt; — Elegir modelo\n"
         "<code>/testollama</code> — Probar conexión Ollama\n\n"
         "<b>🔔 ALERTAS:</b>\n"
-        "<code>/generate_tips</code> — Generar alertas del día\n"
+        "<code>/generate_alerts</code> — Generar alertas del día\n"
         "<code>/show_alerts</code> — Ver alertas de hoy\n"
-        "<code>/test_alerts</code> — Enviar alerta de prueba\n\n"
+        "<code>/test_alerts</code> — Ver próxima alerta pendiente\n"
+        "<code>/notifications</code> — Activar/desactivar alertas automáticas\n\n"
         "<i>Escribe / en el chat para ver los comandos.</i>"
     )
     await message.answer(ayuda_text, parse_mode="HTML")
@@ -280,7 +281,7 @@ async def cmd_fetchtomorrow(message: Message):
     )
 
 
-@router.message(Command("generate_tips"))
+@router.message(Command("generate_alerts"))
 async def cmd_generate_tips(message: Message):
     if await _reject_if_not_allowed(message):
         return
@@ -329,7 +330,7 @@ async def cmd_show_alerts(message: Message):
     await message.answer("\n".join(lineas), parse_mode="HTML")
 
 
-@router.message(Command("notificaciones"))
+@router.message(Command("notifications"))
 async def cmd_notificaciones(message: Message):
     if await _reject_if_not_allowed(message):
         return
