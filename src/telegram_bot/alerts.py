@@ -25,13 +25,18 @@ async def enviar_alertas_hora(bot, fecha: date, hora_envio: str) -> None:
         logger.debug("No enviar alertas a %s: fuera de franja (hora=%s)", hora_envio, hora)
         return
     pendientes = repo.obtener_alertas_pendientes_hora(fecha, hora_envio)
-    if not TELEGRAM_CHAT_IDS:
-        logger.warning("TELEGRAM_CHAT_IDS vacío: no se enviarán alertas")
+
+    # Destinatarios: usuarios con opt-in explícito + admins sin fila (default True)
+    destinatarios: set[str] = set(repo.obtener_chats_con_notificaciones_activas())
+    for admin_id in TELEGRAM_CHAT_IDS:
+        if repo.get_notificaciones_chat(admin_id):
+            destinatarios.add(admin_id)
+
+    if not destinatarios:
+        logger.warning("Sin destinatarios para alertas en %s", hora_envio)
+
     for al in pendientes:
-        for chat_id in TELEGRAM_CHAT_IDS:
-            if not repo.get_notificaciones_chat(chat_id):
-                logger.debug("Notificaciones desactivadas para chat_id=%s, omitiendo alerta id=%s", chat_id, al["id"])
-                continue
+        for chat_id in destinatarios:
             try:
                 await bot.send_message(chat_id=chat_id, text=al["mensaje"])
             except Exception as e:

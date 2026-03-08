@@ -7,7 +7,7 @@ from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
-from config.settings import LLM_MODEL, TELEGRAM_CHAT_IDS, TIMEZONE, get_umbrales_fecha
+from config.settings import IA_QUOTA_PUBLICA, LLM_MODEL, TELEGRAM_CHAT_IDS, TIMEZONE, get_umbrales_fecha
 from src.llm import client as llm_client
 from src.precios.models import PreciosDia, TramoPrecio
 from src.precios.tarifaluzhora import fetch_precios_dia
@@ -19,20 +19,32 @@ router = Router()
 TZ = ZoneInfo(TIMEZONE)
 
 
-def _chat_permitido(chat_id: int) -> bool:
-    if not TELEGRAM_CHAT_IDS:
-        return True
+def _es_admin(chat_id: int) -> bool:
+    """True si el chat está en la lista de admins (TELEGRAM_CHAT_IDS)."""
     return str(chat_id) in TELEGRAM_CHAT_IDS
 
 
-async def _reject_if_not_allowed(message: Message) -> bool:
-    if _chat_permitido(message.chat.id):
+async def _reject_if_not_admin(message: Message) -> bool:
+    """Rechaza si el usuario no es admin. Devuelve True si fue rechazado."""
+    if _es_admin(message.chat.id):
         return False
-    await message.answer(
-        "No tienes permiso para usar este bot. Añade tu chat_id a TELEGRAM_CHAT_IDS en .env.\n"
-        "(Puedes obtener tu chat_id con @userinfobot)"
-    )
+    await message.answer("⛔ Este comando es solo para administradores.")
     return True
+
+
+async def _check_ia_quota(message: Message) -> bool:
+    """True si el usuario público ha agotado su cuota vitalicia de IA (admins sin límite)."""
+    if _es_admin(message.chat.id):
+        return False
+    usos = repo.get_usos_ia(str(message.chat.id))
+    if usos >= IA_QUOTA_PUBLICA:
+        await message.answer(
+            f"⚠️ Has agotado tu cuota de <b>{IA_QUOTA_PUBLICA} consultas</b> a la IA.\n\n"
+            "Si eres usuario habitual, contacta al administrador para obtener acceso ilimitado.",
+            parse_mode="HTML",
+        )
+        return True
+    return False
 
 
 def _fecha_hoy() -> date:
@@ -145,18 +157,30 @@ def _resumen_dia(precios: PreciosDia, label: str = "") -> str:
     return "\n".join(lineas)
 
 
+# ── Comandos públicos ──────────────────────────────────────────────────────────
+
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
+    es_admin = _es_admin(message.chat.id)
+    repo.registrar_usuario_si_nuevo(str(message.chat.id), es_admin)
+
+    if es_admin:
+        acceso_txt = "Tienes acceso de <b>administrador</b>: todos los comandos sin límites."
+    else:
+        acceso_txt = (
+            f"Tienes acceso de <b>usuario público</b>:\n"
+            f"• Consultas de precios: ilimitadas\n"
+            f"• Consultas a la IA (/ask): <b>{IA_QUOTA_PUBLICA} en total</b>\n"
+            f"• Alertas automáticas: actívalas con /notificaciones\n"
+            f"• Comandos de gestión: solo admins\n\n"
+            "Para obtener acceso completo, contacta con el administrador del bot."
+        )
+
     await message.answer(
-        "⚡️ <b>Bot de precios de la luz (PVPC)</b>\n\n"
-        "Te informo de los precios de la electricidad en tiempo real y te aviso automáticamente "
+        "⚡ <b>Bot de precios de la luz (PVPC)</b>\n\n"
+        "Consulta los precios de la electricidad en tiempo real y recibe alertas "
         "de las franjas baratas y caras del día.\n\n"
-        "🔔 <b>Alertas automáticas</b>\n"
-        "Las notificaciones están <b>activadas por defecto</b>. "
-        "Puedes desactivarlas (o reactivarlas) en cualquier momento con /notificaciones. "
-        "El cambio solo te afecta a ti.\n\n"
+        f"{acceso_txt}\n\n"
         "Usa /help para ver todos los comandos disponibles.",
         parse_mode="HTML",
     )
@@ -165,8 +189,6 @@ async def cmd_start(message: Message):
 @router.message(Command("help"))
 @router.message(Command("ayuda"))
 async def cmd_help(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
     ayuda_text = (
         "⚡️ <b>BOT DE PRECIOS DE LA LUZ - AYUDA</b>\n\n"
         "<b>📊 CONSULTA:</b>\n"
@@ -177,7 +199,7 @@ async def cmd_help(message: Message):
         "<code>/fetchtoday</code> — Descargar precios de hoy\n"
         "<code>/fetchtomorrow</code> — Descargar precios de mañana\n\n"
         "<b>🤖 IA:</b>\n"
-        "<code>/ask</code> &lt;pregunta&gt; — Pregunta sobre precios\n"
+        f"<code>/ask</code> &lt;pregunta&gt; — Pregunta sobre precios (cuota: {IA_QUOTA_PUBLICA} consultas)\n"
         "<code>/models</code> — Listar modelos\n"
         "<code>/models</code> &lt;nombre&gt; — Elegir modelo\n"
         "<code>/testollama</code> — Probar conexión Ollama\n\n"
@@ -185,7 +207,7 @@ async def cmd_help(message: Message):
         "<code>/generate_alerts</code> — Generar alertas del día\n"
         "<code>/show_alerts</code> — Ver alertas de hoy\n"
         "<code>/test_alerts</code> — Ver próxima alerta pendiente\n"
-        "<code>/notifications</code> — Activar/desactivar alertas automáticas\n\n"
+        "<code>/notificaciones</code> — Activar/desactivar alertas automáticas\n\n"
         "<i>Escribe / en el chat para ver los comandos.</i>"
     )
     await message.answer(ayuda_text, parse_mode="HTML")
@@ -193,8 +215,6 @@ async def cmd_help(message: Message):
 
 @router.message(Command("price"))
 async def cmd_price(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
     hoy = _fecha_hoy()
     tramos = repo.obtener_precios_fecha(hoy)
     if not tramos:
@@ -208,8 +228,6 @@ async def cmd_price(message: Message):
 
 @router.message(Command("today"))
 async def cmd_today(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
     hoy = _fecha_hoy()
     tramos = repo.obtener_precios_fecha(hoy)
     if not tramos:
@@ -221,8 +239,6 @@ async def cmd_today(message: Message):
 
 @router.message(Command("tomorrow"))
 async def cmd_tomorrow(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
     manana = _fecha_hoy() + timedelta(days=1)
     tramos = repo.obtener_precios_fecha(manana)
     if not tramos:
@@ -232,9 +248,80 @@ async def cmd_tomorrow(message: Message):
     await message.answer(_resumen_dia(precios, "(mañana)"), parse_mode="HTML")
 
 
+@router.message(Command("notificaciones"))
+async def cmd_notificaciones(message: Message):
+    chat_id = str(message.chat.id)
+    repo.registrar_usuario_si_nuevo(chat_id, _es_admin(message.chat.id))
+    actual = repo.get_notificaciones_chat(chat_id)
+    nuevo = not actual
+    repo.set_notificaciones_chat(chat_id, nuevo)
+    if nuevo:
+        await message.answer(
+            "🔔 <b>Notificaciones activadas.</b>\n"
+            "Recibirás alertas automáticas de franjas baratas y caras.",
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            "🔕 <b>Notificaciones desactivadas.</b>\n"
+            "Usa /notificaciones para reactivarlas.",
+            parse_mode="HTML",
+        )
+
+
+# ── Comandos con cuota IA ──────────────────────────────────────────────────────
+
+@router.message(Command("ask"))
+async def cmd_ask(message: Message):
+    if await _check_ia_quota(message):
+        return
+    partes = message.text.split(maxsplit=1)
+    pregunta = partes[1].strip() if len(partes) > 1 else ""
+    if not pregunta:
+        usos = repo.get_usos_ia(str(message.chat.id))
+        restantes = max(0, IA_QUOTA_PUBLICA - usos) if not _es_admin(message.chat.id) else "∞"
+        await message.answer(
+            "Uso: /ask &lt;tu pregunta sobre precios de la luz&gt;\n"
+            f"<i>Consultas disponibles: {restantes}</i>",
+            parse_mode="HTML",
+        )
+        return
+    hoy = _fecha_hoy()
+    manana = hoy + timedelta(days=1)
+    ctx_lineas = []
+    for f, label in [(hoy, "today"), (manana, "tomorrow")]:
+        tramos = repo.obtener_precios_fecha(f)
+        if tramos:
+            tramos_str = ", ".join([f"{h:02d}:00={p:.3f}" for h, p in tramos])
+            ctx_lineas.append(f"{label} (24h in €/kWh): {tramos_str}")
+    contexto = "\n".join(ctx_lineas) if ctx_lineas else "Sin datos de precios recientes."
+    modelo = repo.get_modelo_chat(str(message.chat.id)) or LLM_MODEL
+    try:
+        from src.llm.client import chat_completion
+        system_prompt = (
+            "You are an assistant that answers questions about electricity prices in Spain (PVPC). "
+            "You have access to hourly prices for today and tomorrow (format: HH:00=price €/kWh). "
+            "Answer in Spanish. If asked about prices not in the context, say you don't have that data."
+        )
+        resp = chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Price context:\n{contexto}\n\nUser question: {pregunta}"},
+            ],
+            model=modelo,
+            caller="ask",
+        )
+        await message.answer(resp or "Sin respuesta del modelo.")
+        repo.incrementar_usos_ia(str(message.chat.id))
+    except Exception as e:
+        await message.answer(f"❌ Servicio de consultas no disponible: {e}")
+
+
+# ── Comandos solo admin ────────────────────────────────────────────────────────
+
 @router.message(Command("fetchtoday"))
 async def cmd_fetchtoday(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     hoy = _fecha_hoy()
     manana = hoy + timedelta(days=1)
@@ -260,7 +347,7 @@ async def cmd_fetchtoday(message: Message):
 
 @router.message(Command("fetchtomorrow"))
 async def cmd_fetchtomorrow(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     manana = _fecha_hoy() + timedelta(days=1)
     await message.answer(f"⏳ Obteniendo precios de mañana ({manana.strftime('%d/%m/%Y')}) desde la web...")
@@ -283,7 +370,7 @@ async def cmd_fetchtomorrow(message: Message):
 
 @router.message(Command("generate_alerts"))
 async def cmd_generate_tips(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     hoy = _fecha_hoy()
     tramos = repo.obtener_precios_fecha(hoy)
@@ -316,12 +403,12 @@ async def cmd_generate_tips(message: Message):
 
 @router.message(Command("show_alerts"))
 async def cmd_show_alerts(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     hoy = _fecha_hoy()
     alertas = repo.obtener_alertas_dia(hoy)
     if not alertas:
-        await message.answer("📭 No hay alertas para hoy. Usa /generate_tips para crearlas.")
+        await message.answer("📭 No hay alertas para hoy. Usa /generate_alerts para crearlas.")
         return
     lineas = [f"🔔 <b>Alertas para {hoy}</b>", ""]
     for al in alertas:
@@ -330,31 +417,9 @@ async def cmd_show_alerts(message: Message):
     await message.answer("\n".join(lineas), parse_mode="HTML")
 
 
-@router.message(Command("notifications"))
-async def cmd_notificaciones(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
-    chat_id = str(message.chat.id)
-    actual = repo.get_notificaciones_chat(chat_id)
-    nuevo = not actual
-    repo.set_notificaciones_chat(chat_id, nuevo)
-    if nuevo:
-        await message.answer(
-            "🔔 <b>Notificaciones activadas.</b>\n"
-            "Recibirás las alertas programadas de precios de la luz.",
-            parse_mode="HTML",
-        )
-    else:
-        await message.answer(
-            "🔕 <b>Notificaciones desactivadas.</b>\n"
-            "No recibirás alertas automáticas. Usa /notificaciones para reactivarlas.",
-            parse_mode="HTML",
-        )
-
-
 @router.message(Command("test_alerts"))
 async def cmd_test_alerts(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     hoy = _fecha_hoy()
     now = datetime.now(TZ)
@@ -364,7 +429,7 @@ async def cmd_test_alerts(message: Message):
     if not alertas_hoy:
         await message.answer(
             "📭 <b>No hay alertas generadas para hoy.</b>\n\n"
-            "Usa /generate_tips para generarlas. El scheduler también las genera automáticamente cada día a las 21:00.",
+            "Usa /generate_alerts para generarlas. El scheduler también las genera automáticamente cada día a las 21:00.",
             parse_mode="HTML",
         )
         return
@@ -382,14 +447,14 @@ async def cmd_test_alerts(message: Message):
         total = len(alertas_hoy)
         await message.answer(
             f"✅ <b>Todas las alertas de hoy ya han sido enviadas ({total}).</b>\n\n"
-            "Usa /generate_tips mañana para generar las del día siguiente.",
+            "Usa /generate_alerts mañana para generar las del día siguiente.",
             parse_mode="HTML",
         )
 
 
 @router.message(Command("models"), F.text.len() > 7)
 async def cmd_models_set(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     nombre = message.text.split(maxsplit=1)[1].strip()
     repo.set_modelo_chat(str(message.chat.id), nombre)
@@ -398,7 +463,7 @@ async def cmd_models_set(message: Message):
 
 @router.message(Command("models"))
 async def cmd_models_list(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     modelos = llm_client.list_models()
     if not modelos:
@@ -409,55 +474,16 @@ async def cmd_models_list(message: Message):
 
 @router.message(Command("testollama"))
 async def cmd_test_ollama(message: Message):
-    if await _reject_if_not_allowed(message):
+    if await _reject_if_not_admin(message):
         return
     ok, msg = llm_client.ollama_health()
     await message.answer(msg)
 
 
-@router.message(Command("ask"))
-async def cmd_ask(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
-    partes = message.text.split(maxsplit=1)
-    pregunta = partes[1].strip() if len(partes) > 1 else ""
-    if not pregunta:
-        await message.answer("Uso: /ask <tu pregunta sobre precios de la luz>")
-        return
-    hoy = _fecha_hoy()
-    manana = hoy + timedelta(days=1)
-    ctx_lineas = []
-    for f, label in [(hoy, "today"), (manana, "tomorrow")]:
-        tramos = repo.obtener_precios_fecha(f)
-        if tramos:
-            tramos_str = ", ".join([f"{h:02d}:00={p:.3f}" for h, p in tramos])
-            ctx_lineas.append(f"{label} (24h in €/kWh): {tramos_str}")
-    contexto = "\n".join(ctx_lineas) if ctx_lineas else "Sin datos de precios recientes."
-    modelo = repo.get_modelo_chat(str(message.chat.id)) or LLM_MODEL
-    try:
-        from src.llm.client import chat_completion
-        system_prompt = (
-            "You are an assistant that answers questions about electricity prices in Spain (PVPC). "
-            "You have access to hourly prices for today and tomorrow (format: HH:00=price €/kWh). "
-            "Answer in Spanish. If asked about prices not in the context, say you don't have that data."
-        )
-        resp = chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Price context:\n{contexto}\n\nUser question: {pregunta}"},
-            ],
-            model=modelo,
-            caller="ask",
-        )
-        await message.answer(resp or "Sin respuesta del modelo.")
-    except Exception as e:
-        await message.answer(f"❌ Servicio de consultas no disponible: {e}")
-
+# ── Catch-all ──────────────────────────────────────────────────────────────────
 
 @router.message(F.text)
 async def catch_all(message: Message):
-    if await _reject_if_not_allowed(message):
-        return
     text = (message.text or "").strip()
     if text.startswith("/"):
         await message.answer("Comando no reconocido. Escribe /help para ver los comandos disponibles.")

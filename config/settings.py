@@ -23,6 +23,8 @@ LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "http://192.168.1.52:11434/v1/")
 LLM_MODEL: str = os.getenv("LLM_MODEL", "llama3.2")
 LLM_API_KEY: str = os.getenv("LLM_API_KEY", "ollama")
 LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "60"))
+# Cuota vitalicia de consultas /ask para usuarios públicos (no admin)
+IA_QUOTA_PUBLICA: int = int(os.getenv("IA_QUOTA_PUBLICA", "2"))
 
 # Umbrales (€/kWh): entre semana
 PRECIO_UMBRAL_BAJO: float = float(os.getenv("PRECIO_UMBRAL_BAJO", "0.12"))

@@ -49,6 +49,10 @@ def init_db() -> None:
                 notificaciones INTEGER NOT NULL DEFAULT 1,
                 actualizado_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS quota_ia_chat (
+                chat_id TEXT PRIMARY KEY,
+                usos INTEGER NOT NULL DEFAULT 0
+            );
         """)
         conn.commit()
     finally:
@@ -244,5 +248,58 @@ def obtener_proxima_alerta_pendiente(fecha: date, hora_actual: str) -> Optional[
             "tipo": row["tipo"],
             "mensaje": row["mensaje"],
         }
+    finally:
+        conn.close()
+
+
+def registrar_usuario_si_nuevo(chat_id: str, es_admin: bool) -> None:
+    """Inserta en preferencias_chat si no existe fila. Admin=notif ON, público=notif OFF."""
+    from datetime import datetime, timezone
+    conn = get_connection()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR IGNORE INTO preferencias_chat (chat_id, notificaciones, actualizado_at) VALUES (?, ?, ?)",
+            (str(chat_id), int(es_admin), now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_usos_ia(chat_id: str) -> int:
+    """Número de consultas IA vitalicias del usuario (0 si no hay registro)."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("SELECT usos FROM quota_ia_chat WHERE chat_id = ?", (str(chat_id),))
+        row = cur.fetchone()
+        return row["usos"] if row else 0
+    finally:
+        conn.close()
+
+
+def incrementar_usos_ia(chat_id: str) -> int:
+    """Incrementa el contador vitalicio de IA del usuario. Devuelve el nuevo total."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO quota_ia_chat (chat_id, usos) VALUES (?, 0)", (str(chat_id),)
+        )
+        conn.execute(
+            "UPDATE quota_ia_chat SET usos = usos + 1 WHERE chat_id = ?", (str(chat_id),)
+        )
+        conn.commit()
+        cur = conn.execute("SELECT usos FROM quota_ia_chat WHERE chat_id = ?", (str(chat_id),))
+        return cur.fetchone()["usos"]
+    finally:
+        conn.close()
+
+
+def obtener_chats_con_notificaciones_activas() -> list[str]:
+    """Todos los chat_ids con notificaciones explícitamente activadas (notificaciones=1)."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("SELECT chat_id FROM preferencias_chat WHERE notificaciones = 1")
+        return [r["chat_id"] for r in cur.fetchall()]
     finally:
         conn.close()
