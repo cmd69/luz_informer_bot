@@ -59,6 +59,7 @@ async def set_bot_commands(bot: Bot) -> None:
         BotCommand(command="test_alerts", description="Ver la próxima alerta pendiente"),
         BotCommand(command="models", description="Listar o elegir modelo de IA"),
         BotCommand(command="testollama", description="Probar conexión con Ollama"),
+        BotCommand(command="broadcast_start", description="Enviar bienvenida a todos los usuarios"),
     ]
 
     # Comandos públicos como default para cualquier usuario

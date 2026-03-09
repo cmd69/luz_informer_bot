@@ -480,6 +480,59 @@ async def cmd_test_ollama(message: Message):
     await message.answer(msg)
 
 
+@router.message(Command("broadcast_start"))
+async def cmd_broadcast_start(message: Message):
+    if await _reject_if_not_admin(message):
+        return
+
+    admin_chat_id = str(message.chat.id)
+
+    # Destinatarios: todos en BD + admins en .env, excluyendo al admin que invoca
+    destinatarios: set[str] = set(repo.obtener_todos_los_chat_ids())
+    for chat_id in TELEGRAM_CHAT_IDS:
+        destinatarios.add(chat_id)
+    destinatarios.discard(admin_chat_id)
+
+    if not destinatarios:
+        await message.answer("No hay usuarios registrados a quienes enviar el mensaje.")
+        return
+
+    await message.answer(f"📢 Enviando mensaje de bienvenida a {len(destinatarios)} usuarios…")
+
+    ok, fail = 0, 0
+    for chat_id in destinatarios:
+        es_admin = _es_admin(int(chat_id))
+        if es_admin:
+            acceso_txt = "Tienes acceso de <b>administrador</b>: todos los comandos sin límites."
+        else:
+            acceso_txt = (
+                f"Tienes acceso de <b>usuario público</b>:\n"
+                f"• Consultas de precios: ilimitadas\n"
+                f"• Consultas a la IA (/ask): <b>{IA_QUOTA_PUBLICA} en total</b>\n"
+                f"• Alertas automáticas: actívalas con /notificaciones\n"
+                f"• Comandos de gestión: solo admins\n\n"
+                "Para obtener acceso completo, contacta con el administrador del bot."
+            )
+        texto = (
+            "⚡ <b>Bot de precios de la luz (PVPC)</b>\n\n"
+            "Consulta los precios de la electricidad en tiempo real y recibe alertas "
+            "de las franjas baratas y caras del día.\n\n"
+            f"{acceso_txt}\n\n"
+            "Usa /help para ver todos los comandos disponibles."
+        )
+        try:
+            await message.bot.send_message(chat_id=int(chat_id), text=texto, parse_mode="HTML")
+            ok += 1
+        except Exception as e:
+            logger.warning("broadcast_start: error enviando a chat_id=%s: %s", chat_id, e)
+            fail += 1
+
+    resumen = f"✅ Broadcast completado: {ok} enviados"
+    if fail:
+        resumen += f", {fail} fallidos"
+    await message.answer(resumen)
+
+
 # ── Catch-all ──────────────────────────────────────────────────────────────────
 
 @router.message(F.text)

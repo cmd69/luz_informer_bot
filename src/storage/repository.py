@@ -303,3 +303,13 @@ def obtener_chats_con_notificaciones_activas() -> list[str]:
         return [r["chat_id"] for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+def obtener_todos_los_chat_ids() -> list[str]:
+    """Todos los chat_ids registrados en preferencias_chat."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("SELECT chat_id FROM preferencias_chat")
+        return [r["chat_id"] for r in cur.fetchall()]
+    finally:
+        conn.close()
