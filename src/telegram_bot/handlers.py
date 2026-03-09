@@ -138,6 +138,7 @@ def _resumen_dia(precios: PreciosDia, label: str = "") -> str:
     min_precio = min(t, key=lambda x: x.precio)
     max_precio = max(t, key=lambda x: x.precio)
     precios_vals = [tr.precio for tr in t]
+    hora_actual = _hora_actual()
     lineas = [
         f"⚡️ <b>Precios del día {label}</b>",
         f"📅 {precios.fecha}",
@@ -151,7 +152,10 @@ def _resumen_dia(precios: PreciosDia, label: str = "") -> str:
     ]
     for tramo in t:
         emoji = _get_price_emoji(tramo.precio, precios_vals, precios.fecha)
-        lineas.append(f"{emoji} {tramo.hora:02d}:00   <b>{tramo.precio:.3f}</b> €/kWh")
+        if tramo.hora == hora_actual:
+            lineas.append(f"{emoji} {tramo.hora:02d}:00   <b>{tramo.precio:.3f}</b> €/kWh   ⬅️ AHORA")
+        else:
+            lineas.append(f"{emoji} {tramo.hora:02d}:00   <b>{tramo.precio:.3f}</b> €/kWh")
     lineas.append("")
     lineas.append("<i>Leyenda: 🟢 barato  🟡 medio  🔴 caro</i>")
     return "\n".join(lineas)
