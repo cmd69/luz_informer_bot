@@ -139,6 +139,7 @@ def _resumen_dia(precios: PreciosDia, label: str = "") -> str:
     max_precio = max(t, key=lambda x: x.precio)
     precios_vals = [tr.precio for tr in t]
     hora_actual = _hora_actual()
+    es_hoy = "hoy" in label.lower()
     lineas = [
         f"⚡️ <b>Precios del día {label}</b>",
         f"📅 {precios.fecha}",
@@ -152,7 +153,7 @@ def _resumen_dia(precios: PreciosDia, label: str = "") -> str:
     ]
     for tramo in t:
         emoji = _get_price_emoji(tramo.precio, precios_vals, precios.fecha)
-        if tramo.hora == hora_actual:
+        if es_hoy and tramo.hora == hora_actual:
             lineas.append(f"{emoji} {tramo.hora:02d}:00   <b>{tramo.precio:.3f}</b> €/kWh   ⬅️ AHORA")
         else:
             lineas.append(f"{emoji} {tramo.hora:02d}:00   <b>{tramo.precio:.3f}</b> €/kWh")
