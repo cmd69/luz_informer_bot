@@ -47,3 +47,18 @@ make lint
 ```
 
 El `.venv` es solo para herramientas de desarrollo local (IDE, linters). La ejecución real siempre en contenedor.
+
+**NUNCA ejecutar `python3`, `pip install` u otros comandos directamente en el host.**
+
+## Convención de commits
+
+Formato obligatorio:
+
+```
+[NN] TYPE(scope): descripción breve
+```
+
+- `[NN]` secuencial por repo (último: `[23]`, siguiente: `[24]`)
+- Tipos: `FEAT` `FIX` `DOCS` `REFACTOR` `CHORE` `TEST` `CI` `INFRA` `STYLE`
+- Scope en minúsculas: `(bot)`, `(scheduler)`, `(docker)`, `(api)`
+- Descripción en imperativo: "añadir", "corregir", "actualizar"
