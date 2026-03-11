@@ -4,8 +4,9 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from config.settings import IA_QUOTA_PUBLICA, LLM_MODEL, TELEGRAM_CHAT_IDS, TIMEZONE, get_umbrales_fecha
 from src.llm import client as llm_client
@@ -13,6 +14,7 @@ from src.precios.models import PreciosDia, TramoPrecio
 from src.precios.tarifaluzhora import fetch_precios_dia
 from src.scheduler.alertas_ia import generar_alertas_dia
 from src.storage import repository as repo
+from src.telegram_bot.keyboards import build_main_keyboard, build_settings_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -162,13 +164,10 @@ def _resumen_dia(precios: PreciosDia, label: str = "") -> str:
     return "\n".join(lineas)
 
 
-# ── Comandos públicos ──────────────────────────────────────────────────────────
+# ── Helpers de texto ──────────────────────────────────────────────────────────
 
-@router.message(CommandStart())
-async def cmd_start(message: Message):
-    es_admin = _es_admin(message.chat.id)
-    repo.registrar_usuario_si_nuevo(str(message.chat.id), es_admin)
 
+def _build_start_text(es_admin: bool) -> str:
     if es_admin:
         acceso_txt = "Tienes acceso de <b>administrador</b>: todos los comandos sin límites."
     else:
@@ -180,21 +179,46 @@ async def cmd_start(message: Message):
             f"• Comandos de gestión: solo admins\n\n"
             "Para obtener acceso completo, contacta con el administrador del bot."
         )
-
-    await message.answer(
+    return (
         "⚡ <b>Bot de precios de la luz (PVPC)</b>\n\n"
         "Consulta los precios de la electricidad en tiempo real y recibe alertas "
         "de las franjas baratas y caras del día.\n\n"
         f"{acceso_txt}\n\n"
-        "Usa /help para ver todos los comandos disponibles.",
-        parse_mode="HTML",
+        "Usa /help para ver todos los comandos disponibles."
     )
 
 
-@router.message(Command("help"))
-@router.message(Command("ayuda"))
-async def cmd_help(message: Message):
-    ayuda_text = (
+def _get_price_text() -> str | None:
+    hoy = _fecha_hoy()
+    tramos = repo.obtener_precios_fecha(hoy)
+    if not tramos:
+        return None
+    precios_dia = PreciosDia(fecha=hoy, tramos=[TramoPrecio(hora=h, precio=p) for h, p in tramos])
+    hora_actual = _hora_actual()
+    horas_precios = _get_smart_time_range(hora_actual, precios_dia)
+    return _formatear_tabla_inteligente(horas_precios, hora_actual)
+
+
+def _get_today_text() -> str | None:
+    hoy = _fecha_hoy()
+    tramos = repo.obtener_precios_fecha(hoy)
+    if not tramos:
+        return None
+    precios = PreciosDia(fecha=hoy, tramos=[TramoPrecio(hora=h, precio=p) for h, p in tramos])
+    return _resumen_dia(precios, "(hoy)")
+
+
+def _get_tomorrow_text() -> str | None:
+    manana = _fecha_hoy() + timedelta(days=1)
+    tramos = repo.obtener_precios_fecha(manana)
+    if not tramos:
+        return None
+    precios = PreciosDia(fecha=manana, tramos=[TramoPrecio(hora=h, precio=p) for h, p in tramos])
+    return _resumen_dia(precios, "(mañana)")
+
+
+def _build_help_text() -> str:
+    return (
         "⚡️ <b>BOT DE PRECIOS DE LA LUZ - AYUDA</b>\n\n"
         "<b>📊 CONSULTA:</b>\n"
         "<code>/price</code> — Precios alrededor de ahora\n"
@@ -215,42 +239,69 @@ async def cmd_help(message: Message):
         "<code>/notificaciones</code> — Activar/desactivar alertas automáticas\n\n"
         "<i>Escribe / en el chat para ver los comandos.</i>"
     )
-    await message.answer(ayuda_text, parse_mode="HTML")
+
+
+async def _safe_edit(callback: CallbackQuery, text: str, reply_markup=None) -> None:
+    try:
+        await callback.message.edit_text(
+            text, parse_mode="HTML", reply_markup=reply_markup,
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            pass
+        else:
+            await callback.message.answer(
+                text, parse_mode="HTML", reply_markup=reply_markup,
+            )
+
+
+# ── Comandos públicos ──────────────────────────────────────────────────────────
+
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    es_admin = _es_admin(message.chat.id)
+    chat_id = str(message.chat.id)
+    repo.registrar_usuario_si_nuevo(chat_id, es_admin)
+    notif_active = repo.get_notificaciones_chat(chat_id)
+
+    await message.answer(
+        _build_start_text(es_admin),
+        parse_mode="HTML",
+        reply_markup=build_main_keyboard(es_admin, notif_active),
+    )
+
+
+@router.message(Command("help"))
+@router.message(Command("ayuda"))
+async def cmd_help(message: Message):
+    await message.answer(_build_help_text(), parse_mode="HTML")
 
 
 @router.message(Command("price"))
 async def cmd_price(message: Message):
-    hoy = _fecha_hoy()
-    tramos = repo.obtener_precios_fecha(hoy)
-    if not tramos:
+    text = _get_price_text()
+    if not text:
         await message.answer("No hay precios guardados para hoy. Usa /fetchtoday o espera al job diario.")
         return
-    precios_dia = PreciosDia(fecha=hoy, tramos=[TramoPrecio(hora=h, precio=p) for h, p in tramos])
-    hora_actual = _hora_actual()
-    horas_precios = _get_smart_time_range(hora_actual, precios_dia)
-    await message.answer(_formatear_tabla_inteligente(horas_precios, hora_actual), parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("today"))
 async def cmd_today(message: Message):
-    hoy = _fecha_hoy()
-    tramos = repo.obtener_precios_fecha(hoy)
-    if not tramos:
+    text = _get_today_text()
+    if not text:
         await message.answer("No hay precios guardados para hoy. Usa /fetchtoday o espera al job diario.")
         return
-    precios = PreciosDia(fecha=hoy, tramos=[TramoPrecio(hora=h, precio=p) for h, p in tramos])
-    await message.answer(_resumen_dia(precios, "(hoy)"), parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("tomorrow"))
 async def cmd_tomorrow(message: Message):
-    manana = _fecha_hoy() + timedelta(days=1)
-    tramos = repo.obtener_precios_fecha(manana)
-    if not tramos:
+    text = _get_tomorrow_text()
+    if not text:
         await message.answer("No hay precios guardados para mañana. Usa /fetchtomorrow o espera al job diario.")
         return
-    precios = PreciosDia(fecha=manana, tramos=[TramoPrecio(hora=h, precio=p) for h, p in tramos])
-    await message.answer(_resumen_dia(precios, "(mañana)"), parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("notificaciones"))
@@ -507,24 +558,7 @@ async def cmd_broadcast_start(message: Message):
     ok, fail = 0, 0
     for chat_id in destinatarios:
         es_admin = _es_admin(int(chat_id))
-        if es_admin:
-            acceso_txt = "Tienes acceso de <b>administrador</b>: todos los comandos sin límites."
-        else:
-            acceso_txt = (
-                f"Tienes acceso de <b>usuario público</b>:\n"
-                f"• Consultas de precios: ilimitadas\n"
-                f"• Consultas a la IA (/ask): <b>{IA_QUOTA_PUBLICA} en total</b>\n"
-                f"• Alertas automáticas: actívalas con /notificaciones\n"
-                f"• Comandos de gestión: solo admins\n\n"
-                "Para obtener acceso completo, contacta con el administrador del bot."
-            )
-        texto = (
-            "⚡ <b>Bot de precios de la luz (PVPC)</b>\n\n"
-            "Consulta los precios de la electricidad en tiempo real y recibe alertas "
-            "de las franjas baratas y caras del día.\n\n"
-            f"{acceso_txt}\n\n"
-            "Usa /help para ver todos los comandos disponibles."
-        )
+        texto = _build_start_text(es_admin)
         try:
             await message.bot.send_message(chat_id=int(chat_id), text=texto, parse_mode="HTML")
             ok += 1
@@ -536,6 +570,245 @@ async def cmd_broadcast_start(message: Message):
     if fail:
         resumen += f", {fail} fallidos"
     await message.answer(resumen)
+
+
+# ── Callback handlers (teclado inline) ────────────────────────────────────────
+
+
+def _cb_chat_id(callback: CallbackQuery) -> str:
+    return str(callback.message.chat.id)
+
+
+def _cb_is_admin(callback: CallbackQuery) -> bool:
+    return _es_admin(callback.message.chat.id)
+
+
+def _cb_main_kb(callback: CallbackQuery):
+    chat_id = _cb_chat_id(callback)
+    is_admin = _cb_is_admin(callback)
+    notif_active = repo.get_notificaciones_chat(chat_id)
+    return build_main_keyboard(is_admin, notif_active)
+
+
+@router.callback_query(F.data == "cb:price")
+async def cb_price(callback: CallbackQuery):
+    text = _get_price_text()
+    if not text:
+        text = "No hay precios guardados para hoy."
+    await _safe_edit(callback, text, reply_markup=_cb_main_kb(callback))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:today")
+async def cb_today(callback: CallbackQuery):
+    text = _get_today_text()
+    if not text:
+        text = "No hay precios guardados para hoy."
+    await _safe_edit(callback, text, reply_markup=_cb_main_kb(callback))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:tomorrow")
+async def cb_tomorrow(callback: CallbackQuery):
+    text = _get_tomorrow_text()
+    if not text:
+        text = "No hay precios guardados para mañana."
+    await _safe_edit(callback, text, reply_markup=_cb_main_kb(callback))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:notif")
+async def cb_notif(callback: CallbackQuery):
+    chat_id = _cb_chat_id(callback)
+    repo.registrar_usuario_si_nuevo(chat_id, _cb_is_admin(callback))
+    actual = repo.get_notificaciones_chat(chat_id)
+    nuevo = not actual
+    repo.set_notificaciones_chat(chat_id, nuevo)
+    if nuevo:
+        text = "🔔 <b>Notificaciones activadas.</b>\nRecibirás alertas automáticas de franjas baratas y caras."
+    else:
+        text = "🔕 <b>Notificaciones desactivadas.</b>"
+    await _safe_edit(callback, text, reply_markup=_cb_main_kb(callback))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:fetch")
+async def cb_fetch(callback: CallbackQuery):
+    if not _cb_is_admin(callback):
+        await callback.answer("⛔ Solo admins", show_alert=True)
+        return
+    await callback.answer("⏳ Obteniendo precios de hoy...")
+    hoy = _fecha_hoy()
+    manana = hoy + timedelta(days=1)
+    precios, web_date = fetch_precios_dia(hoy)
+    if not precios:
+        if web_date is not None and web_date != hoy:
+            repo.borrar_precios_fecha(manana)
+            text = (
+                f"⏳ Todavía no hay datos para hoy. La web muestra fecha {web_date.strftime('%d/%m/%Y')}. "
+                "Se han borrado los precios de mañana por si estaban mal."
+            )
+        else:
+            text = "❌ Error: no se pudieron obtener los precios."
+    else:
+        repo.guardar_precios_dia(precios.fecha, [(t.hora, t.precio) for t in precios.tramos_ordenados()])
+        n = len(precios.tramos)
+        text = (
+            f"✅ Precios de hoy obtenidos y guardados.\n"
+            f"Mín: {precios.min_precio:.4f} | Máx: {precios.max_precio:.4f} | Horas: {n}"
+        )
+    await _safe_edit(callback, text, reply_markup=_cb_main_kb(callback))
+
+
+@router.callback_query(F.data == "cb:settings")
+async def cb_settings(callback: CallbackQuery):
+    is_admin = _cb_is_admin(callback)
+    await _safe_edit(
+        callback,
+        "⚙️ <b>Ajustes</b>\n\nSelecciona una opción:",
+        reply_markup=build_settings_keyboard(is_admin),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:back")
+async def cb_back(callback: CallbackQuery):
+    es_admin = _cb_is_admin(callback)
+    await _safe_edit(
+        callback,
+        _build_start_text(es_admin),
+        reply_markup=_cb_main_kb(callback),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:help")
+async def cb_help(callback: CallbackQuery):
+    is_admin = _cb_is_admin(callback)
+    await _safe_edit(
+        callback,
+        _build_help_text(),
+        reply_markup=build_settings_keyboard(is_admin),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:gen_alerts")
+async def cb_gen_alerts(callback: CallbackQuery):
+    if not _cb_is_admin(callback):
+        await callback.answer("⛔ Solo admins", show_alert=True)
+        return
+    await callback.answer("⏳ Generando alertas...")
+    hoy = _fecha_hoy()
+    tramos = repo.obtener_precios_fecha(hoy)
+    if len(tramos) < 24:
+        precios, web_date = fetch_precios_dia(hoy)
+        if not precios:
+            text = "❌ No se pudieron obtener los precios para generar alertas."
+            await _safe_edit(callback, text, reply_markup=build_settings_keyboard(True))
+            return
+        repo.guardar_precios_dia(precios.fecha, [(t.hora, t.precio) for t in precios.tramos_ordenados()])
+
+    alertas = await generar_alertas_dia(hoy, on_alert=None)
+    if not alertas:
+        text = "⚠️ No se generaron alertas (comprueba si hay precios disponibles)."
+    else:
+        repo.guardar_alertas_programadas(hoy, alertas)
+        text = f"✅ {len(alertas)} alertas generadas y guardadas para hoy."
+    await _safe_edit(callback, text, reply_markup=build_settings_keyboard(True))
+
+
+@router.callback_query(F.data == "cb:show_alerts")
+async def cb_show_alerts(callback: CallbackQuery):
+    if not _cb_is_admin(callback):
+        await callback.answer("⛔ Solo admins", show_alert=True)
+        return
+    hoy = _fecha_hoy()
+    alertas = repo.obtener_alertas_dia(hoy)
+    if not alertas:
+        text = "📭 No hay alertas para hoy. Usa 📋 Generar alertas para crearlas."
+    else:
+        lineas = [f"🔔 <b>Alertas para {hoy}</b>", ""]
+        for al in alertas:
+            estado = "✅" if al["enviado"] else "⏳"
+            lineas.append(f"{estado} <b>{al['hora_envio']}</b> [{al['tipo']}]: {al['mensaje']}")
+        text = "\n".join(lineas)
+    await _safe_edit(callback, text, reply_markup=build_settings_keyboard(True))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:test_alerts")
+async def cb_test_alerts(callback: CallbackQuery):
+    if not _cb_is_admin(callback):
+        await callback.answer("⛔ Solo admins", show_alert=True)
+        return
+    hoy = _fecha_hoy()
+    now = datetime.now(TZ)
+    hora_actual_str = f"{now.hour:02d}:{now.minute:02d}"
+    alertas_hoy = repo.obtener_alertas_dia(hoy)
+    if not alertas_hoy:
+        text = "📭 <b>No hay alertas generadas para hoy.</b>\n\nUsa 📋 Generar alertas para crearlas."
+    else:
+        proxima = repo.obtener_proxima_alerta_pendiente(hoy, hora_actual_str)
+        if proxima:
+            text = (
+                f"🧪 <b>PRÓXIMA ALERTA PENDIENTE</b>\n\n"
+                f"🕐 <b>Hora programada:</b> {proxima['hora_envio']}\n"
+                f"📌 <b>Tipo:</b> {proxima['tipo']}\n\n"
+                f"{proxima['mensaje']}"
+            )
+        else:
+            total = len(alertas_hoy)
+            text = f"✅ <b>Todas las alertas de hoy ya han sido enviadas ({total}).</b>"
+    await _safe_edit(callback, text, reply_markup=build_settings_keyboard(True))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:fetch_tom")
+async def cb_fetch_tom(callback: CallbackQuery):
+    if not _cb_is_admin(callback):
+        await callback.answer("⛔ Solo admins", show_alert=True)
+        return
+    await callback.answer("⏳ Obteniendo precios de mañana...")
+    manana = _fecha_hoy() + timedelta(days=1)
+    precios, web_date = fetch_precios_dia(manana)
+    if not precios:
+        if web_date is not None and web_date != manana:
+            text = f"⏳ Todavía no hay datos para mañana. La web muestra fecha {web_date.strftime('%d/%m/%Y')}."
+        else:
+            text = "❌ Error: no se pudieron obtener los precios."
+    else:
+        repo.guardar_precios_dia(precios.fecha, [(t.hora, t.precio) for t in precios.tramos_ordenados()])
+        n = len(precios.tramos)
+        text = (
+            f"✅ Precios de mañana obtenidos y guardados.\n"
+            f"Mín: {precios.min_precio:.4f} | Máx: {precios.max_precio:.4f} | Horas: {n}"
+        )
+    await _safe_edit(callback, text, reply_markup=build_settings_keyboard(True))
+
+
+@router.callback_query(F.data == "cb:models")
+async def cb_models(callback: CallbackQuery):
+    if not _cb_is_admin(callback):
+        await callback.answer("⛔ Solo admins", show_alert=True)
+        return
+    modelos = llm_client.list_models()
+    if not modelos:
+        text = "❌ No se pudo obtener la lista de modelos (¿Ollama accesible?)."
+    else:
+        text = "Modelos disponibles:\n" + "\n".join(f"• {m}" for m in modelos) + "\n\nUsa /models <nombre> para elegir."
+    await _safe_edit(callback, text, reply_markup=build_settings_keyboard(True))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cb:testollama")
+async def cb_testollama(callback: CallbackQuery):
+    if not _cb_is_admin(callback):
+        await callback.answer("⛔ Solo admins", show_alert=True)
+        return
+    ok, msg = llm_client.ollama_health()
+    await _safe_edit(callback, msg, reply_markup=build_settings_keyboard(True))
+    await callback.answer()
 
 
 # ── Catch-all ──────────────────────────────────────────────────────────────────

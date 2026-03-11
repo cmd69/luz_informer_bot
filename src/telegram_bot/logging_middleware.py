@@ -4,7 +4,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,32 @@ class InteractionLoggingMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        if isinstance(event, CallbackQuery):
+            cb = event
+            chat_id = cb.message.chat.id if cb.message else "unknown"
+            user_str = _user_info(cb.message) if cb.message else "unknown"
+            cb_data = cb.data or "(empty)"
+            started = time.perf_counter()
+            logger.info(
+                "callback_query chat_id=%s user=%s data=%s",
+                chat_id, user_str, cb_data,
+            )
+            try:
+                result = await handler(event, data)
+                elapsed = time.perf_counter() - started
+                logger.info(
+                    "callback_done chat_id=%s data=%s elapsed_sec=%.2f",
+                    chat_id, cb_data, elapsed,
+                )
+                return result
+            except Exception as e:
+                elapsed = time.perf_counter() - started
+                logger.warning(
+                    "callback_error chat_id=%s data=%s elapsed_sec=%.2f error=%s",
+                    chat_id, cb_data, elapsed, e,
+                )
+                raise
+
         if not isinstance(event, Message):
             return await handler(event, data)
 

@@ -85,6 +85,7 @@ async def main() -> None:
 
     dp = Dispatcher()
     router.message.middleware(InteractionLoggingMiddleware())
+    router.callback_query.middleware(InteractionLoggingMiddleware())
     dp.include_router(router)
 
     scheduler = AsyncIOScheduler()
