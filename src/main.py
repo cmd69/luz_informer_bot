@@ -18,7 +18,7 @@ from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS, TIMEZONE
 from src.storage.repository import init_db
 from src.telegram_bot.handlers import router
 from src.telegram_bot.logging_middleware import InteractionLoggingMiddleware
-from src.scheduler.jobs import job_fetch_precios, job_diseno_alertas, job_enviar_alertas_hora_async
+from src.scheduler.jobs import job_fetch_precios, job_diseno_alertas, job_enviar_alertas_hora_async, job_retry_fetch_manana
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -89,8 +89,13 @@ async def main() -> None:
     dp.include_router(router)
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(job_fetch_precios, "cron", hour=20, minute=30, timezone=TIMEZONE)
-    scheduler.add_job(job_diseno_alertas, "cron", hour=21, minute=0, timezone=TIMEZONE)
+    # Fetch de precios hoy y mañana a las 22:00 (10pm)
+    scheduler.add_job(job_fetch_precios, "cron", hour=22, minute=0, timezone=TIMEZONE)
+    # Generación de alertas automáticas también a las 22:00 (10pm)
+    scheduler.add_job(job_diseno_alertas, "cron", hour=22, minute=5, timezone=TIMEZONE)
+    # Reintento de fetch de mañana a las 23:59 si no se consiguieron datos
+    scheduler.add_job(job_retry_fetch_manana, "cron", hour=23, minute=59, timezone=TIMEZONE)
+    # Envío de alertas cada hora y media hora dentro de la franja de notificación
     scheduler.add_job(_job_enviar_alertas, "cron", minute="0,30", timezone=TIMEZONE)
     scheduler.start()
 
